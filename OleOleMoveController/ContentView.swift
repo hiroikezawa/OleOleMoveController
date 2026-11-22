@@ -11,6 +11,9 @@
 //    左下 / 右下 XYパッド 2つで1セット（参考アプリと同じ 180×180）。MIDI設定はセット単位で ◁ ▷ 切り替え
 //                右下のセットのみパッドの左にフェーダー（CH/CC はMIDI設定ごと）
 //
+//  ストップウォッチが止まっている間にスライダー・パッド・フェーダーを触ると、
+//  画面中央に大きく「時計が止まっている」警告を出す（タッチは遮らない）。
+//
 //  設定は長押しで開く（シートで表示するので画面外に見切れない）：
 //    アプリ名 / M 長押し → 全体設定（MIDI接続先・Mirror URL・ログ等）
 //    スライダー名 長押し → そのスライダーの設定
@@ -68,6 +71,9 @@ struct ControllerLayout: Equatable {
 struct ContentView: View {
     @Bindable var app: AppModel
     @State private var showSettings = false
+    /// ストップウォッチ停止中に操作したときの警告
+    @State private var showClockWarning = false
+    @State private var hideWarningTask: Task<Void, Never>?
 
     var body: some View {
         GeometryReader { geo in
@@ -89,6 +95,7 @@ struct ContentView: View {
                                 .frame(maxWidth: .infinity, maxHeight: layout.topAreaHeight, alignment: .topLeading)
                             XYPadSetControl(set: app.padSets[0], padSize: ControllerLayout.padSize,
                                             spacing: ControllerLayout.padSpacing)
+                                .simultaneousGesture(interactionWatcher)
                         }
 
                         // 右列：スライダー / XYパッド 3・4
@@ -101,21 +108,57 @@ struct ContentView: View {
                                 }
                             }
                             .frame(width: layout.rightColumnWidth, height: layout.topAreaHeight, alignment: .topTrailing)
+                            .simultaneousGesture(interactionWatcher)
                             XYPadSetControl(set: app.padSets[1], padSize: ControllerLayout.padSize,
                                             spacing: ControllerLayout.padSpacing,
                                             faderWidth: ControllerLayout.sliderWidth,
                                             faderSpacing: ControllerLayout.faderSpacing)
+                                .simultaneousGesture(interactionWatcher)
                         }
                         .frame(width: layout.rightColumnWidth)
                     }
                 }
                 .padding(layout.margin)
+
+                if showClockWarning {
+                    ClockStoppedWarning()
+                        .transition(.opacity)
+                }
             }
+            .animation(.easeOut(duration: 0.15), value: showClockWarning)
         }
         .ignoresSafeArea()
+        .onChange(of: app.stopwatch.isRunning) { _, running in
+            if running { hideClockWarning() }
+        }
         .sheet(isPresented: $showSettings) {
             GlobalSettingsView(app: app)
         }
+    }
+
+    /// 操作エリアへのタッチを、子のジェスチャー（スライダー・パッド）を妨げずに検知する。
+    private var interactionWatcher: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { _ in
+                guard !app.stopwatch.isRunning else { return }
+                hideWarningTask?.cancel()
+                showClockWarning = true
+            }
+            .onEnded { _ in
+                guard showClockWarning else { return }
+                // 指を離してから少しの間は表示を残す
+                hideWarningTask?.cancel()
+                hideWarningTask = Task {
+                    try? await Task.sleep(for: .seconds(1.5))
+                    guard !Task.isCancelled else { return }
+                    showClockWarning = false
+                }
+            }
+    }
+
+    private func hideClockWarning() {
+        hideWarningTask?.cancel()
+        showClockWarning = false
     }
 
     /// Move画面の表示経路（USB / Wi-Fi）。画面の邪魔にならないよう左下に小さく。
@@ -226,5 +269,38 @@ private struct BatteryIndicator: View {
         case ..<0.88: return "battery.75percent"
         default: return "battery.100percent"
         }
+    }
+}
+
+// MARK: - Clock warning
+
+/// ストップウォッチ停止中に操作したときの大きな警告。タッチは下のコントロールへ通す。
+private struct ClockStoppedWarning: View {
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 40, weight: .bold))
+                .symbolEffect(.pulse, options: .repeating)
+            Text("CLOCK STOPPED")
+                .font(Theme.futura(36, weight: .bold))
+                .minimumScaleFactor(0.5)
+                .lineLimit(1)
+            Text("時計が動いていません — 右上の時計をタップでスタート")
+                .font(.system(size: 13, weight: .bold))
+                .minimumScaleFactor(0.5)
+                .lineLimit(1)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 30)
+        .padding(.vertical, 18)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
+                .fill(Theme.danger.opacity(0.88))
+        )
+        .shadow(color: Theme.danger, radius: 15)
+        .padding(40)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Stopwatch is not running")
     }
 }
