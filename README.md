@@ -1,313 +1,377 @@
 # OleOle Move Controller
 
-Ableton Move（Move Everything / move-anything 環境）向けの、iPad専用ライブパフォーマンス用MIDI CCコントローラーです。
+**English** | [日本語](README.ja.md)
 
-- 6本のスライダー（KICK / HAT / S1〜S4）
-- 4つのXYパッド（2つで1セット。名前付きMIDI設定を切り替えて使える。マルチタッチで同時に操作可能）
-- 右下のセットに付くフェーダー（CH/CC と値は MIDI 設定ごと）
-- ストップウォッチ（停止中にコントロールを触ると警告を表示）
-- バッテリー残量の表示
-- Move Mirror Display（128×64 OLEDのミラー表示）
+An iPad-only MIDI CC controller for live performance with Ableton Move (in a Move
+Everything / move-anything setup).
 
-これらをすべて1画面に並べています。画面遷移、タブ、縦スクロールはありません。
+- 6 sliders (KICK / HAT / S1–S4)
+- 4 XY pads (in sets of two, switching between named MIDI configurations; multi-touch
+  lets you move them at the same time)
+- A fader attached to the bottom-right set (its CH/CC and value belong to each MIDI
+  configuration)
+- A stopwatch (touching a control while it is stopped shows a warning)
+- Battery level display
+- Move Mirror Display (a mirror of the 128×64 OLED)
 
-- 対象: iPadOS 17以降、横画面専用（`TARGETED_DEVICE_FAMILY = 2`）
-- 使用フレームワーク: SwiftUI、Observation、Core MIDI、WebKit、Network
-- 外部ライブラリ: なし
-  - 参考アプリでは AudioKit `Controls` の XYPad を使っていましたが、本アプリでは同じ見た目と操作を SwiftUI `Canvas` と `DragGesture(minimumDistance: 0)` で実装しました。
+All of these sit on one screen. There are no screen transitions, no tabs and no
+vertical scrolling.
+
+- Target: iPadOS 17 or later, landscape only (`TARGETED_DEVICE_FAMILY = 2`)
+- Frameworks: SwiftUI, Observation, Core MIDI, WebKit, Network
+- External libraries: none
+  - The reference app used AudioKit `Controls`' XYPad; this app implements the same
+    look and handling with a SwiftUI `Canvas` and `DragGesture(minimumDistance: 0)`.
 
 ---
 
-## 1. 接続構成
+## 1. Connections
 
 ```
-iPad（USBホスト） ── USB-C ── Ableton Move（Standalone）
+iPad (USB host) ── USB-C ── Ableton Move (Standalone)
       │                               │
-      └──── Wi-Fi（同じネットワーク）──┘   ← Mirror Display 用（USBネットワークが無い場合）
+      └──── Wi-Fi (same network) ─────┘   ← for Mirror Display (when there is no USB network)
 ```
 
-### MIDI（USB-C）
+### MIDI (USB-C)
 
-1. iPadとMoveをUSB-Cケーブルで直結します。
-   - データ転送に対応したケーブルを使ってください。充電専用ケーブルではMIDIが通りません。
-2. アプリを起動すると、Core MIDIのDestinationを列挙します。
-   - 名前、メーカー名、モデル名に "move" を含むか、メーカー名に "ableton" を含むポートを自動で選びます。
-   - 該当するポートが無い場合は、USBポートを選びます。
-   - ポート名をコードに固定していません。
-3. 最上段の **M** が光れば接続済みです。接続先のポート名は **SETTINGS → MIDI OUTPUT** で確認できます（`ACTIVE` と表示）。
-4. 接続先を手動で選ぶ場合は、最上段のアプリ名か **M** を長押しして **SETTINGS → MIDI OUTPUT** を開きます。
-   - 選んだ接続先は保存されます。保存するのは uniqueID と名前で、再接続時は uniqueID、次に名前の順で照合します。
-   - 手動で選んだ機器が見つからないときは `WAITING` と表示し、ほかの機器へは送信しません。
-5. USBの抜き差しには自動で対応します。
-   - 抜いた時点で送信を止めます（`DROP` としてログに記録）。
-   - 挿し直すと自動で再接続し、送信を再開します。
-   - 再接続後に **SEND ALL** を押すと、全コントロールの現在値を送り直せます。
+1. Connect the iPad and the Move directly with a USB-C cable.
+   - Use a cable that carries data. A charge-only cable carries no MIDI.
+2. When the app starts, it lists the Core MIDI destinations.
+   - It automatically picks a port whose name, manufacturer or model contains "move",
+     or whose manufacturer contains "ableton".
+   - If no such port exists, it picks a USB port.
+   - Port names are not hard-coded.
+3. When **M** in the top row lights up, it is connected. The connected port's name is
+   shown in **SETTINGS → MIDI OUTPUT** (marked `ACTIVE`).
+4. To choose the destination by hand, long-press the app name or **M** in the top row to
+   open **SETTINGS → MIDI OUTPUT**.
+   - The chosen destination is saved. It stores the uniqueID and the name, and on
+     reconnection matches the uniqueID first, then the name.
+   - When a manually chosen device cannot be found it shows `WAITING`, and sends to no
+     other device.
+5. USB plugging and unplugging is handled automatically.
+   - Sending stops the moment it is unplugged (logged as `DROP`).
+   - Plugging back in reconnects automatically and resumes sending.
+   - After reconnecting, **SEND ALL** resends the current values of every control.
 
-### Move側でCCを受け取るには（重要）
+### Receiving the CCs on the Move (important)
 
-**iPadは Move の USB-C ポートにつないでください。USB-A ポートではMIDIが通りません。**
+**Connect the iPad to the Move's USB-C port. MIDI does not pass through the USB-A port.**
 
-- MoveのUSB-Aはホスト側の端子で、USB MIDI**デバイス**を挿すための口です。iPadは汎用のUSB MIDIデバイスとして振る舞えないので、USB-Aに挿してもMIDIの経路ができません。
-- MoveのUSB-Cにホスト（iPad）をつなぐと、Moveは「Ableton Move」として複数のMIDIポート（Live / User / External / Standalone）を出します。
-- [Schwung](https://github.com/charlesvestal/schwung)（旧 Move Everything）が外部MIDI（cable 2）として受け取るのは、**Standalone Port** に送ったMIDIだけです（Schwung の `docs/SYSEX.md` にある実測結果）。
-  - このアプリは自動選択で Standalone Port を最優先にします。
-- 届いたCCは、Schwung の CC map / CC learn で割り当てます。各スライダーとXYパッドの設定（名前を長押し）にある SEND / TEST / SEND X/Y/BOTH は、この学習のときに使ってください。
-  - 右下のフェーダーは、XY の MIDI 設定シートの FADER 欄で CH/CC を変えられます。
-- Ableton Move の標準ファームウェアだけでは、任意のCCを割り当てる機能は限られています。
+- The Move's USB-A is a host-side port, for plugging in USB MIDI **devices**. The iPad
+  cannot act as a generic USB MIDI device, so plugging it into USB-A creates no MIDI path.
+- When a host (the iPad) is connected to the Move's USB-C, the Move presents itself as
+  "Ableton Move" with several MIDI ports (Live / User / External / Standalone).
+- [Schwung](https://github.com/charlesvestal/schwung) (formerly Move Everything) receives
+  as external MIDI (cable 2) only the MIDI sent to the **Standalone Port** (as measured in
+  Schwung's `docs/SYSEX.md`).
+  - The app's automatic selection gives the Standalone Port top priority.
+- Assign the incoming CCs with Schwung's CC map / CC learn. Use the SEND / TEST / SEND
+  X/Y/BOTH buttons in each slider's and XY pad's settings (long-press the name) for that
+  learning.
+  - The bottom-right fader's CH/CC can be changed in the FADER section of the XY MIDI
+    configuration sheet.
+- Ableton Move's stock firmware alone offers only limited ways to assign arbitrary CCs.
 
-## 2. Mirror Display の有効化
+## 2. Enabling Mirror Display
 
-[move-anything の MANUAL.md](https://github.com/peterjungx/move-anything/blob/main/MANUAL.md) の「Display Mirror」の手順です。
+These are the steps from "Display Mirror" in
+[move-anything's MANUAL.md](https://github.com/peterjungx/move-anything/blob/main/MANUAL.md).
 
-1. Moveで **Shift + Vol + Step 2** を押し、Global Settings を開きます。
-2. **Display → Mirror Display** を **On** にします。この設定は再起動後も保持されます。
-3. ブラウザで `http://move.local:7681` を開くと、Moveの画面が表示されます。
+1. On the Move, press **Shift + Vol + Step 2** to open Global Settings.
+2. Set **Display → Mirror Display** to **On**. The setting is kept across restarts.
+3. Open `http://move.local:7681` in a browser and the Move's screen appears.
 
-### 配信方式（`src/host/display_server.c` を調査した結果）
+### How it is streamed (from reading `src/host/display_server.c`)
 
-| 項目 | 内容 |
+| Item | Details |
 |---|---|
-| サーバー | ポート7681のHTTPサーバー（起動時に自動で立ち上がり、Mirror OFF中は待機） |
-| `GET /` | HTML。`<canvas width=128 height=64>` と描画用のJS |
-| `GET /stream` | **Server-Sent Events**。1フレームは1024バイト（SSD1306形式、8ページ×128列、1bit/px）をbase64化したもの。約30Hzで、画面に変化があったときだけ送られる |
-| 同時接続 | 最大8クライアント |
+| Server | An HTTP server on port 7681 (starts automatically at boot, idle while Mirror is OFF) |
+| `GET /` | HTML: `<canvas width=128 height=64>` and the JS that draws it |
+| `GET /stream` | **Server-Sent Events**. One frame is 1024 bytes (SSD1306 format, 8 pages × 128 columns, 1 bit/px) in base64. About 30 Hz, sent only when the screen changes |
+| Simultaneous connections | Up to 8 clients |
 
-本アプリでは、この配信ページを **WKWebView でそのまま表示**しています。独自のストリーミング処理は実装していません。
-ページには次のCSSとJSだけを注入しています。
+The app **shows this page as it is in a WKWebView**. No streaming code of its own is
+implemented. Only the following CSS and JS are injected into the page:
 
-- 黒背景にして、canvasをビュー全体に拡大する（`image-rendering: pixelated`）
-- 枠線とステータス表示を消す
-- ネオンブルーの着色（設定でOFFにすると白黒表示）
-- ページ内の `#status`（`connected - 30 fps` など）の文字列をネイティブ側に渡し、接続状態として表示する
+- A black background, with the canvas scaled to fill the view (`image-rendering: pixelated`)
+- Removing the border and the status display
+- Neon-blue tinting (switch it OFF in the settings for black and white)
+- Passing the page's `#status` string (`connected - 30 fps` and the like) to the native
+  side, shown as the connection state
 
-WebViewは表示専用です。スクロール、ピンチズーム、タッチ操作はすべて無効にしています。
+The WebView is display-only. Scrolling, pinch zoom and touch are all disabled.
 
-### 表示する経路（USB優先）
+### Display paths (USB first)
 
-- 既定のURLは **`http://172.16.254.1:7681`** です。
-  - 172.16.254.1 は、USB-Cでつないだときの Move のアドレスです（[Ableton公式ヘルプ](https://help.ableton.com/hc/en-us/articles/14645140037788-Troubleshooting-Move-network-connections)に記載）。
-  - display_server は全インターフェースで待ち受けているので、USB-Cケーブルだけでミラー表示できます。
-  - 以前の既定値 `http://move.local:7681` が保存されていた場合は、起動時に自動でUSBのアドレスへ移行します。
-- **USBに届かないときはWi-Fiで表示**します（設定で切り替え可能、既定はON）。
-  - USBで読み込めないと、すぐ `move.local`（Wi-Fi）で表示を試みます。
-  - Wi-Fiで表示している間は、15秒ごとにUSB側を確認し、復帰していればUSBに戻します。
-  - ケーブルを抜くなどしてストリームが5秒戻らなければ、経路を切り替えて読み直します。
-- メイン画面の Mirror 表示の左下に、表示中の経路（`USB` / `Wi-Fi` / `LAN`）を小さく表示します。
-- 設定画面の **USB 172.16.254.1** / **Wi-Fi move.local** ボタンで、明示的に切り替えることもできます。
-- **NETWORK PATH CHECK** では、有線（USB Ethernet）、Wi-Fi、経路を限定しない場合のそれぞれで、配信ページに届くかを確かめます。
+- The default URL is **`http://172.16.254.1:7681`**.
+  - 172.16.254.1 is the Move's address when connected over USB-C (stated in
+    [Ableton's help article](https://help.ableton.com/hc/en-us/articles/14645140037788-Troubleshooting-Move-network-connections)).
+  - display_server listens on every interface, so the mirror works with just the USB-C cable.
+  - If the old default `http://move.local:7681` was saved, it is migrated to the USB
+    address automatically at start-up.
+- **When USB cannot be reached, it is shown over Wi-Fi** (switchable in the settings;
+  default ON).
+  - If it cannot load over USB, it immediately tries `move.local` (Wi-Fi).
+  - While shown over Wi-Fi, it checks the USB side every 15 s and returns to USB once it
+    is back.
+  - If the stream does not come back within 5 s (for example after unplugging the
+    cable), it switches path and reloads.
+- At the bottom left of the Mirror view on the main screen, the current path (`USB` /
+  `Wi-Fi` / `LAN`) is shown small.
+- The **USB 172.16.254.1** / **Wi-Fi move.local** buttons in the settings switch
+  explicitly.
+- **NETWORK PATH CHECK** checks whether the page can be reached over wired (USB
+  Ethernet), over Wi-Fi, and with no path restriction.
 
-接続に失敗すると、エラーを表示したうえで自動的に再試行します。未接続のときにMirror表示をタップすると、すぐに再接続します。
-Mirror Display がつながらなくても、MIDI操作には影響しません。
+If the connection fails, it shows an error and retries automatically. Tapping the
+Mirror view while disconnected reconnects at once. Mirror Display not connecting has no
+effect on MIDI operation.
 
 ---
 
-## 3. 画面と操作
+## 3. Screen and controls
 
-参考アプリ（OleOleMIDICon）のデザインに合わせています。
+The design follows the reference app (OleOleMIDICon).
 
-- 画面にはライブ中に触るものだけを置いています。枠付きのボタン、パネル、ログは置いていません。
-- 設定は**長押し**で開きます。設定は画面中央のシートで表示し、スクロールできるので、画面外に見切れません。
+- The screen holds only what you touch during a live set. There are no framed buttons,
+  panels or logs.
+- Settings open with a **long press**. They appear as a sheet in the middle of the
+  screen and scroll, so nothing runs off the screen.
 
-| 位置 | 内容 | 操作 |
+| Position | Contents | Controls |
 |---|---|---|
-| 最上段 | アプリ名、M（MIDI接続中は光る）、バッテリー残量、ストップウォッチ | アプリ名かMを**長押し** → 全体設定。時間表示を**タップ** → START/STOP、**長押し** → RESET |
-| 左上 | Move Mirror Display（空いた面積で最大の2:1）。左下に表示経路（USB / Wi-Fi） | 未接続のときに**タップ** → 再接続 |
-| 右上 | スライダー KICK / HAT / S1〜S4 | スライダーをドラッグ。名前を**長押し** → スライダーの設定 |
-| 左下 | SET 1（XY 1 / XY 2） | 下記参照 |
-| 右下 | フェーダー、SET 2（XY 3 / XY 4） | 下記参照 |
+| Top row | App name, M (lit while MIDI is connected), battery level, stopwatch | **Long-press** the app name or M → overall settings. **Tap** the time → START/STOP, **long-press** → RESET |
+| Top left | Move Mirror Display (the largest 2:1 that fits the free space). Display path (USB / Wi-Fi) at its bottom left | **Tap** while disconnected → reconnect |
+| Top right | Sliders KICK / HAT / S1–S4 | Drag a slider. **Long-press** its name → that slider's settings |
+| Bottom left | SET 1 (XY 1 / XY 2) | See below |
+| Bottom right | Fader, SET 2 (XY 3 / XY 4) | See below |
 
-### バッテリー残量
+### Battery level
 
-- ステータスバーを隠しているので、最上段の M とストップウォッチの間に残量（アイコンと %）を表示します。
-- 残量や充電状態が変わると、すぐに表示を更新します。
-- 充電中は稲妻つきのアイコンになります。
-- 充電していない状態で20%以下になると、赤で表示します。
-- 残量を取得できない環境（シミュレーターなど）では `--%` と表示します。
+- The status bar is hidden, so the level (icon and %) is shown between M and the
+  stopwatch in the top row.
+- The display updates as soon as the level or charging state changes.
+- While charging, the icon has a lightning bolt.
+- When not charging and at 20 % or less, it is shown in red.
+- Where the level cannot be read (the simulator and so on) it shows `--%`.
 
-### スライダー
+### Sliders
 
-- 参考アプリの ModWheel と同じ見た目・大きさです（65×210pt、濃紺の角丸に青い横バー）。
-- KICK / HAT / S1〜S4 の6本を、右列の幅いっぱいに均等な間隔で並べます。
-- **相対ドラッグ方式**です。上へ動かすと値が増えます。スライダーの高さが0〜127の全域に相当し、タッチした位置で値が飛ぶことはありません。
-- 名前の長押しで開く設定では、名前、MIDI CH、CCの変更と、SEND / TEST / 0 / 64 / 127 の送信ができます。
-  - **TEST** は 0→127→現在値 の順に、約1秒かけて値を送るスイープです。
+- The same look and size as the reference app's ModWheel (65×210 pt, a dark navy
+  rounded rectangle with a blue horizontal bar).
+- The 6 sliders KICK / HAT / S1–S4 are spread evenly across the full width of the right
+  column.
+- **Relative dragging.** Moving up increases the value. The slider's height covers the
+  whole 0–127 range, and the value does not jump to where you touch.
+- The settings opened by long-pressing the name change the name, MIDI CH and CC, and
+  send SEND / TEST / 0 / 64 / 127.
+  - **TEST** is a sweep sending 0 → 127 → the current value over about 1 second.
 
-### XYパッド
+### XY pads
 
-- XYパッドは**2つで1セット**です。左下が SET 1（XY 1・XY 2）、右下が SET 2（XY 3・XY 4）です。
-- セットごとに**名前付きのMIDI設定を最大16個**持てます。1つのMIDI設定には、2パッド分（各パッドの X/Y の CH・CC・反転）が入ります。
-  - セットの下の **◁ 名前 ▷** をタップすると、2つのパッドがまとめて切り替わります。
-  - 切り替えただけではMIDIを送信しません（受信側のパラメーターが急に変わらないように）。
-  - マーカーの位置はMIDI設定ごとに記憶し、切り替えるとその設定の最後の位置に戻ります。
-- MIDI設定の名前を**長押し**すると、設定シートが開きます。
-  - MIDI設定の追加（選択中の設定を複製し、各CCを+2）、削除、並べ替え、名前の変更ができます。
-  - 2つのパッドそれぞれの X/Y の MIDI CH・CC、Reverse X/Y、ON/OFF、SEND X / Y / BOTH、CENTER もここで操作します。
+- XY pads come **in sets of two**: SET 1 at the bottom left (XY 1, XY 2) and SET 2 at the
+  bottom right (XY 3, XY 4).
+- Each set holds **up to 16 named MIDI configurations**. One MIDI configuration holds
+  both pads (CH, CC and reverse for each pad's X/Y).
+  - Tap **◁ name ▷** under the set to switch both pads together.
+  - Switching alone sends no MIDI (so parameters on the receiving side do not jump).
+  - The marker position is remembered per MIDI configuration, and switching returns to
+    that configuration's last position.
+- **Long-press** the MIDI configuration's name to open its settings sheet.
+  - It can add MIDI configurations (duplicating the selected one with each CC +2), delete,
+    reorder and rename them.
+  - Each pad's X/Y MIDI CH and CC, Reverse X/Y, ON/OFF, SEND X / Y / BOTH and CENTER are
+    also operated here.
 
-- 左端が X=0、右端が X=127、下端が Y=0、上端が Y=127 です。
-- 動作の流れ
-  - タッチした瞬間に値を更新して送信します。
-  - ドラッグ中はリアルタイムに送信します。
-  - 指を離したときは、最終値を必ず送信します。
-  - 指を離しても、最後の位置を保持します。
+- The left edge is X=0, the right edge X=127, the bottom edge Y=0 and the top edge Y=127.
+- How it behaves
+  - The value is updated and sent the moment you touch.
+  - It sends in real time while dragging.
+  - When you lift your finger, the final value is always sent.
+  - The last position is kept after you lift your finger.
 - ON/OFF
-  - OFFのときは、パッドを操作してもMIDIを送信しません（マーカーは動きます）。
-  - SEND X / Y / BOTH は、CCラーニング用の明示的な操作なので、OFFのときでも送信します。
-  - **CENTER** は X=64、Y=64 に移動し、ONのときだけ送信します。
-- Reverse X / Reverse Y は軸ごとに送信値を反転します（`127 - v`）。既定はOFFです。
+  - When OFF, operating the pad sends no MIDI (the marker still moves).
+  - SEND X / Y / BOTH are explicit actions for CC learning, so they send even when OFF.
+  - **CENTER** moves to X=64, Y=64, and sends only when ON.
+- Reverse X / Reverse Y invert the sent value per axis (`127 - v`). Default OFF.
 
-### フェーダー（右下）
+### Fader (bottom right)
 
-- SET 2 のパッドの左に、スライダーと同じ見た目のフェーダーがあります。操作もスライダーと同じ相対ドラッグ方式です。
-- CH/CC と値は MIDI 設定ごとに持ちます。◁ ▷ でMIDI設定を切り替えると、フェーダーの割り当てと値も切り替わります（切り替えただけでは送信しません）。
-- MIDI設定の名前を長押しして開くシートの **FADER** 欄で、CH/CC を変更できます。
-- 各パッドは、それぞれ独立した `DragGesture` を持っています。スライダーも含めて、別々の指で同時に操作できます。
+- To the left of SET 2's pads is a fader that looks like the sliders. It is operated with
+  the same relative dragging as the sliders.
+- Its CH/CC and value belong to each MIDI configuration. Switching MIDI configurations
+  with ◁ ▷ also switches the fader's assignment and value (switching alone sends nothing).
+- Its CH/CC can be changed in the **FADER** section of the sheet opened by long-pressing
+  the MIDI configuration's name.
+- Each pad has its own independent `DragGesture`. Together with the sliders, they can be
+  operated at the same time with separate fingers.
 
-### ストップウォッチ
+### Stopwatch
 
-- 計測は「開始時刻」と「積算時間」から計算しています。画面の更新回数には依存しません。
-- バックグラウンドから戻ったときや、アプリを再起動した後も、正しい経過時間を表示します。状態は保存されています。
-- 動作中は、参考アプリと同じく背景のグラデーションが暗い青に変わります。
-- SETTINGS でミリ秒表示（`HH:MM:SS.mmm`）に切り替えられます。
-- **停止中の警告**：ストップウォッチが止まっている間にスライダー・XYパッド・フェーダーを触ると、画面中央に「**CLOCK STOPPED**」の警告を表示します。
-  - 警告はタッチを遮らないので、操作はそのまま続けられます。
-  - 指を離してから1.5秒で消えます。ストップウォッチをスタートすると、すぐに消えます。
-  - 最上段（アプリ名・M・ストップウォッチ）と Mirror 表示を触ったときは表示しません。
-
----
-
-## 4. MIDI 実装
-
-- 送信APIの流れ
-  - 準備: `MIDIClientCreateWithBlock` → `MIDIOutputPortCreate`
-  - 送信先の取得: `MIDIGetNumberOfDestinations` / `MIDIGetDestination`
-  - 送信: `MIDISendEventList`（MIDI 1.0 プロトコル、UMP Message Type 2）
-- メッセージ形式: `Status = 0xB0 | (channel - 1)`、`Data1 = CC番号`、`Data2 = 値`
-  - UMPワードは `0x2g_Bn_cc_vv` です（g はグループ）。
-- 抜き差しの検知: `msgSetupChanged`、`msgObjectAdded`、`msgObjectRemoved`、`msgPropertyChanged` の通知を受けて再列挙します。
-- 送信の流れ
-  - 送信処理は、SwiftUI Viewから分離した `MIDISendEngine` が担当します。専用のシリアルキュー（QoS `.userInteractive`）で動きます。
-  - 間引き（`CCThrottle`）はコントロールごと（スライダー1本、またはXYの1軸ごと）に独立しています。
-    - 同じ値は連続して送りません。
-    - 送信頻度は最大60Hzです。間隔内に来た値は保留し、最新の値だけを後で送ります。
-    - タッチ終了時の最終値は、間隔に関係なくすぐに送ります。
-    - SENDボタンなどの明示的な送信は、同じ値でも必ず送ります。
-  - 接続先がない、または送信エラーが起きた場合は、そのメッセージを `DROP` / `ERR` として記録します。間引きの記憶もリセットするので、再接続後は同じ値でも送信されます。
-- デバッグログ
-  - 送信スレッドからロック付きのリングバッファ（300件）に追記します。
-  - UIは `TimelineView` で、0.2秒ごとに読み出すだけです。SwiftUIの監視対象にしていないので、送信のたびに画面を再描画することはありません。
-  - ログはOFFにでき、OFFでも送信数は数えます。
-- **Loopback test port**（SETTINGS）
-  - アプリ内に仮想MIDI Destinationを作ります。それを接続先に選ぶと、実際にCore MIDIを通ったバイト列を `RX` としてログに表示します。
-  - ハードウェアなしで送信内容を確かめるための機能です。
-  - iOSで仮想エンドポイントを作るには `UIBackgroundModes: audio` が必要なので、Info.plistに設定しています。
+- Timing is computed from "start time" and "accumulated time". It does not depend on how
+  often the screen updates.
+- It shows the correct elapsed time after returning from the background and after
+  restarting the app. The state is saved.
+- While running, the background gradient turns dark blue, as in the reference app.
+- SETTINGS can switch to a millisecond display (`HH:MM:SS.mmm`).
+- **Warning while stopped**: touching a slider, XY pad or the fader while the stopwatch
+  is stopped shows a "**CLOCK STOPPED**" warning in the middle of the screen.
+  - The warning does not block touches, so you can keep operating.
+  - It disappears 1.5 s after you lift your finger, and immediately when the stopwatch starts.
+  - It is not shown when touching the top row (app name, M, stopwatch) or the Mirror view.
 
 ---
 
-## 5. 設定の保存
+## 4. MIDI implementation
 
-`AppConfiguration`（Codable）をJSONにして UserDefaults に保存します。
+- Sending API flow
+  - Setup: `MIDIClientCreateWithBlock` → `MIDIOutputPortCreate`
+  - Getting destinations: `MIDIGetNumberOfDestinations` / `MIDIGetDestination`
+  - Sending: `MIDISendEventList` (MIDI 1.0 protocol, UMP Message Type 2)
+- Message format: `Status = 0xB0 | (channel - 1)`, `Data1 = CC number`, `Data2 = value`
+  - The UMP word is `0x2g_Bn_cc_vv` (g is the group).
+- Detecting plugging and unplugging: it re-lists on the `msgSetupChanged`,
+  `msgObjectAdded`, `msgObjectRemoved` and `msgPropertyChanged` notifications.
+- Sending flow
+  - Sending is handled by `MIDISendEngine`, separate from the SwiftUI views. It runs on a
+    dedicated serial queue (QoS `.userInteractive`).
+  - Thinning (`CCThrottle`) is independent per control (per slider, or per XY axis).
+    - The same value is never sent twice in a row.
+    - Sending is at most 60 Hz. Values arriving within the interval are held, and only the
+      latest is sent later.
+    - The final value at the end of a touch is sent immediately, regardless of the interval.
+    - Explicit sends such as the SEND buttons always send, even the same value.
+  - If there is no destination or a send error occurs, the message is recorded as `DROP` /
+    `ERR`. The thinning memory is reset too, so after reconnecting even the same value is sent.
+- Debug log
+  - The sending thread appends to a locked ring buffer (300 entries).
+  - The UI only reads it every 0.2 s with a `TimelineView`. It is not observed by SwiftUI,
+    so sends never redraw the screen.
+  - The log can be switched OFF; the send count is kept even when OFF.
+- **Loopback test port** (SETTINGS)
+  - Creates a virtual MIDI destination inside the app. Choosing it as the destination shows
+    in the log, as `RX`, the bytes that actually went through Core MIDI.
+  - A feature for checking what is sent without hardware.
+  - Creating a virtual endpoint on iOS needs `UIBackgroundModes: audio`, so it is set in
+    Info.plist.
 
-- 操作中は0.6秒のデバウンスをかけて保存します。バックグラウンドへ移ったときは、すぐに保存します。
-- 保存する内容
-  - 6本のスライダー（KICK / HAT / S1〜S4）の名前、CH/CC、最終値
-  - XYパッドの名前付きMIDI設定（各軸のCH/CC、反転、位置、フェーダーのCH/CCと値）、選択中の設定、ON/OFF
-  - MIDI接続先の識別情報
-  - Mirror Display の URLと着色設定
-  - ストップウォッチの状態
-  - ログ設定
-- 保存データにないキーは既定値で補います。将来、項目が増えても既存の設定は壊れません。
+---
 
-初期値:
+## 5. Saved settings
+
+`AppConfiguration` (Codable) is saved as JSON in UserDefaults.
+
+- While operating, saves are debounced by 0.6 s. Moving to the background saves immediately.
+- What is saved
+  - Name, CH/CC and last value of the 6 sliders (KICK / HAT / S1–S4)
+  - The XY pads' named MIDI configurations (each axis's CH/CC, reverse, position, the
+    fader's CH/CC and value), the selected configuration, ON/OFF
+  - The MIDI destination's identity
+  - Mirror Display's URL and tint setting
+  - The stopwatch state
+  - Log settings
+- Keys missing from the saved data are filled with defaults, so existing settings do not
+  break when items are added in future.
+
+Defaults:
 
 | | CH | CC |
 |---|---|---|
 | KICK / HAT | 1 / 1 | 103 / 104 |
-| S1〜S4 | 1 | 20, 21, 22, 23 |
+| S1–S4 | 1 | 20, 21, 22, 23 |
 | XY 1 X / Y | 1 / 1 | 24 / 25 |
 | XY 2 X / Y | 1 / 1 | 26 / 27 |
 | XY 3 X / Y | 1 / 1 | 28 / 29 |
 | XY 4 X / Y | 1 / 1 | 30 / 31 |
-| フェーダー（右下） | 1 | 102 |
+| Fader (bottom right) | 1 | 102 |
 
-**SETTINGS → RESET CH/CC TO DEFAULTS** で、コントロールの設定を初期値に戻せます。
-
----
-
-## 6. ライブ運用のための設定
-
-- 起動中は自動スリープしません（`isIdleTimerDisabled`）。
-- 画面端のシステムジェスチャより、アプリの操作を優先します（`defersSystemGestures`）。ステータスバーとホームインジケータは隠しています。
-- スクロールするViewはありません。Mirror表示のWebViewもタッチを受け付けません。
-- 描画の負荷を抑える工夫
-  - `@Observable` でプロパティ単位に監視しているので、1つのコントロールを動かしても、ほかのコントロールは再描画されません。
-  - スライダーとXYパッドは `Canvas` で描いています。グロー効果は、位置に依存しない背面レイヤーに付けています。
-- タップや長押しを受け付ける文字は、どれも高さ44pt以上の当たり判定を持たせています。スライダーとXYパッドは本体全体が当たり判定です。
+**SETTINGS → RESET CH/CC TO DEFAULTS** returns the controls' settings to the defaults.
 
 ---
 
-## 7. ビルド
+## 6. Settings for live use
+
+- It does not auto-sleep while running (`isIdleTimerDisabled`).
+- The app's controls take priority over system gestures at the screen edges
+  (`defersSystemGestures`). The status bar and home indicator are hidden.
+- There are no scrolling views. The Mirror WebView accepts no touches either.
+- Keeping drawing cheap
+  - `@Observable` observes per property, so moving one control does not redraw the others.
+  - Sliders and XY pads are drawn with `Canvas`. The glow effect sits on a background
+    layer that does not depend on position.
+- Every piece of text that takes a tap or long press has a hit area at least 44 pt tall.
+  For sliders and XY pads the whole body is the hit area.
+
+---
+
+## 7. Building
 
 ```bash
 open OleOleMoveController.xcodeproj
 ```
 
 - Scheme: `OleOleMoveController`
-- 実機で動かす場合は、Signing & Capabilities で Team を設定してください（初期値は参考プロジェクトと同じTeamです）。
-- テストの実行:
+- To run on a device, set the Team in Signing & Capabilities (the initial value is the same
+  Team as the reference project).
+- Running the tests:
 
 ```bash
 xcodebuild test -project OleOleMoveController.xcodeproj -scheme OleOleMoveController -destination 'platform=iOS Simulator,name=iPad Pro (11-inch) (4th generation)'
 ```
 
-### ファイル構成
+### Files
 
-| ファイル | 役割 |
+| File | Role |
 |---|---|
-| `OleOleMoveControllerApp.swift` | エントリポイント、スリープ防止、ScenePhaseに応じた保存と再接続 |
-| `ContentView.swift` | 1画面レイアウト（`ControllerLayout` で各エリアの寸法を計算）、最上段（バッテリー残量を含む）、ストップウォッチ停止中の警告 |
-| `MIDIMessage.swift` | `ControlChange`（バイト列とUMP）、`CCValueMapper`、`CCThrottle`。Core MIDIに依存しない純粋なロジック |
-| `MIDIManager.swift` | Core MIDI のクライアントとポート、接続先の列挙・自動選択・抜き差し対応、`MIDISendEngine`、`MIDILog` |
-| `MIDIControlConfiguration.swift` | 永続化する設定の型 |
-| `ConfigurationStore.swift` | UserDefaults への保存と読み込み（デバウンス付き） |
-| `ControllerModels.swift` | `KnobModel`、`XYPadModel`、`XYPadSetModel`（セットとフェーダー）、`AppModel` |
-| `SliderView.swift` | スライダー |
-| `XYPadView.swift` | XYパッド（MIDI設定の切り替え ◁ ▷ を含む） |
-| `StopwatchView.swift` | ストップウォッチ（ロジックと表示） |
-| `MoveMirrorView.swift` | WKWebView による Mirror 表示、`MirrorController` |
-| `MirrorDiagnostics.swift` | USB/Wi-Fi 経路ごとの到達性チェック、インターフェースの監視 |
-| `SettingsView.swift` | スライダー・XYパッド（MIDI設定の管理）・全体の設定シート |
-| `Theme.swift` | 配色、Futura フォント、`Neon` / `BlueShadow`（参考アプリ由来） |
+| `OleOleMoveControllerApp.swift` | Entry point, sleep prevention, saving and reconnecting according to ScenePhase |
+| `ContentView.swift` | The one-screen layout (`ControllerLayout` computes each area's size), the top row (including the battery level), the warning while the stopwatch is stopped |
+| `MIDIMessage.swift` | `ControlChange` (bytes and UMP), `CCValueMapper`, `CCThrottle`. Pure logic with no Core MIDI dependency |
+| `MIDIManager.swift` | The Core MIDI client and port, listing / auto-selecting / plug handling of destinations, `MIDISendEngine`, `MIDILog` |
+| `MIDIControlConfiguration.swift` | Types of the saved settings |
+| `ConfigurationStore.swift` | Saving to and loading from UserDefaults (debounced) |
+| `ControllerModels.swift` | `KnobModel`, `XYPadModel`, `XYPadSetModel` (set and fader), `AppModel` |
+| `SliderView.swift` | Slider |
+| `XYPadView.swift` | XY pad (including the ◁ ▷ MIDI configuration switch) |
+| `StopwatchView.swift` | Stopwatch (logic and display) |
+| `MoveMirrorView.swift` | Mirror display with WKWebView, `MirrorController` |
+| `MirrorDiagnostics.swift` | Reachability checks per USB/Wi-Fi path, interface monitoring |
+| `SettingsView.swift` | Settings sheets for sliders, XY pads (managing MIDI configurations) and the whole app |
+| `Theme.swift` | Colours, the Futura font, `Neon` / `BlueShadow` (from the reference app) |
 
 ---
 
-## 8. 検証状況
+## 8. Verification status
 
-| # | 項目 | 状態 |
+| # | Item | Status |
 |---|---|---|
-| 1 | iPad横画面でレイアウトが収まる | ✅ `LayoutTests` で主要6機種のサイズを計算上検証。実機（iPad Pro 11" M4）へインストールして起動済み。**目視確認は未実施** |
-| 2 | 6スライダーの独立操作 | ✅ 相対ドラッグをユニットテストで検証。実機での操作は未確認 |
-| 3 | 2つのXYパッドの同時操作 | ⚠️ 各パッドが独立した `DragGesture` を持つ構造。**実機での同時操作は未確認** |
-| 4 | 各軸のCH/CC設定の独立 | ✅ ユニットテスト |
-| 5 | 正しいMIDI CCメッセージの出力 | ✅ ステータスバイト・データバイト・UMPのユニットテストに加え、Core MIDIの仮想ポート（ループバック）を実際に通す結合テストで `B2 16 63` / `BF 1B 00` を受信して確認 |
-| 6 | SEND操作で現在値を送信 | ✅ ユニットテスト（force送信） |
-| 7 | USBの抜き差し | ⚠️ 切断中は送信を止め、再接続後に再送するロジックをユニットテストで検証。**実機でのUSB抜き差しは未検証** |
-| 8 | 再起動後も設定を維持 | ✅ 保存と読み込み、欠けたキーの補完をユニットテストで検証。実機での再起動確認は未実施 |
-| 9 | ストップウォッチ | ✅ ユニットテスト（時刻からの計算、RESET、時計の逆行） |
-| 10 | Mirror Displayの接続 | ⚠️ モックサーバー（`Tools/mock_display_server.py`）がHTTPとSSEで応答することは確認。**アプリ内での表示と実機Moveでの表示は未検証** |
-| 11 | Mirror接続失敗時もUIが動作 | ⚠️ 設計上、MIDIとは独立（失敗時はエラー表示と自動再試行）。**動作確認は未実施** |
-| 12 | バッテリー残量の表示 | ⚠️ ビルドのみ確認。**実機での表示は未確認** |
-| 13 | ストップウォッチ停止中の警告 | ⚠️ ビルドのみ確認。**警告の表示と、表示中もスライダー・パッドが操作できるかは未確認** |
+| 1 | The layout fits an iPad in landscape | ✅ `LayoutTests` checks the sizes of 6 main models by calculation. Installed and launched on a device (iPad Pro 11" M4). **Not yet checked by eye** |
+| 2 | 6 sliders operated independently | ✅ Relative dragging checked by unit tests. Not yet tried on a device |
+| 3 | Two XY pads operated at the same time | ⚠️ Each pad has its own independent `DragGesture`. **Simultaneous operation not yet checked on a device** |
+| 4 | Independent CH/CC settings per axis | ✅ Unit tests |
+| 5 | Correct MIDI CC messages sent | ✅ Unit tests of the status byte, data bytes and UMP, plus an integration test through a Core MIDI virtual port (loopback) that receives `B2 16 63` / `BF 1B 00` |
+| 6 | SEND sends the current value | ✅ Unit tests (forced send) |
+| 7 | USB plugging and unplugging | ⚠️ The logic of stopping while disconnected and resending after reconnecting is checked by unit tests. **Not yet tested by unplugging USB on a device** |
+| 8 | Settings kept after a restart | ✅ Saving and loading, and filling in missing keys, checked by unit tests. Restart on a device not yet checked |
+| 9 | Stopwatch | ✅ Unit tests (computing from time, RESET, the clock going backwards) |
+| 10 | Mirror Display connection | ⚠️ The mock server (`Tools/mock_display_server.py`) is confirmed to answer over HTTP and SSE. **Display inside the app and with a real Move not yet tested** |
+| 11 | UI still works when the Mirror connection fails | ⚠️ By design independent of MIDI (on failure it shows an error and retries automatically). **Behaviour not yet checked** |
+| 12 | Battery level display | ⚠️ Only the build is confirmed. **Not yet checked on a device** |
+| 13 | Warning while the stopwatch is stopped | ⚠️ Only the build is confirmed. **Whether the warning appears, and whether sliders and pads stay usable while it is shown, not yet checked** |
 
-**ハードウェアが必要なため未検証の項目**
+**Not yet tested because hardware is needed**
 
-- Ableton Move を実際に USB-C でつないだときの、MIDIポート名、自動検出、CC受信
-- USB-C ケーブルだけで HTTP（Mirror）に到達できるか
-  - Move が iPad に対して USB Ethernet として見えるかどうかは、アプリ内の NETWORK PATH CHECK で確かめられます。
-- 実機での同時マルチタッチ、レイテンシー
+- With an Ableton Move actually connected over USB-C: the MIDI port names, automatic
+  detection and CC reception
+- Whether HTTP (Mirror) can be reached over the USB-C cable alone
+  - Whether the Move appears to the iPad as USB Ethernet can be checked with NETWORK PATH
+    CHECK inside the app.
+- Simultaneous multi-touch and latency on a device
 
-### モックサーバーで Mirror を試す
+### Trying Mirror with the mock server
 
-Mac で次のコマンドを実行し、シミュレーター側で URL を `http://localhost:7681` にします。
+Run this on a Mac and set the URL to `http://localhost:7681` on the simulator side.
 
 ```bash
 python3 Tools/mock_display_server.py
